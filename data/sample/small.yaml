@@ -1,0 +1,15 @@
+days: 5
+slots_per_day: 4
+teachers:
+  - {id: T1, unavailable: [0, 1]}
+  - {id: T2}
+rooms:
+  - {id: R101, capacity: 30}
+  - {id: Lab, capacity: 15}
+groups:
+  - {id: G1, size: 25}
+  - {id: G2, size: 12}
+lessons:
+  - {id: Math-G1, group: G1, teacher: T1, count: 3}
+  - {id: Math-G2, group: G2, teacher: T1, count: 3}
+  - {id: Bio-G2, group: G2, teacher: T2, count: 2}
