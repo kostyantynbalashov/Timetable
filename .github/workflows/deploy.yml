@@ -1,0 +1,40 @@
+name: Збірка і публікація розкладу
+
+on:
+  workflow_dispatch:      # кнопка "Run workflow" на GitHub
+  schedule:
+    - cron: "17 5 * * 1-5"   # щодня (Пн-Пт) о 5:17 UTC — перебудова на випадок правок за ніч
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Зібрати сайт із Google Таблиці
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          WORKLOAD_NORM_HOURS: ${{ vars.WORKLOAD_NORM_HOURS }}
+        run: python build.py
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

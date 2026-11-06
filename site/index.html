@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Розклад</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Розклад занять</h1>
+  <nav>
+    <button class="tab active" data-tab="group">За групою</button>
+    <button class="tab" data-tab="teacher">За викладачем</button>
+    <button class="tab" data-tab="room">За аудиторією</button>
+    <button class="tab" data-tab="about">Про збірку</button>
+  </nav>
+</header>
+
+<main>
+  <section id="view-group" class="view active">
+    <div class="controls">
+      <label>Група: <select id="group-select"></select></label>
+    </div>
+    <div id="group-table"></div>
+  </section>
+
+  <section id="view-teacher" class="view">
+    <div class="controls">
+      <label>Викладач: <select id="teacher-select"></select></label>
+    </div>
+    <div id="teacher-table"></div>
+  </section>
+
+  <section id="view-room" class="view">
+    <div class="controls">
+      <label>Аудиторія: <select id="room-select"></select></label>
+    </div>
+    <div id="room-table"></div>
+  </section>
+
+  <section id="view-about" class="view">
+    <p id="built-date"></p>
+    <p>Дані — з Google Таблиці; розставлено автоматично (CP-SAT) для занять
+      зі стрічковим типом розкладу. Особисті картки викладачів (ступінь,
+      звання, ставка) і навантаження — у приватній вкладці Google Таблиці,
+      на цьому сайті не публікуються.</p>
+    <h3>Зауваження збірки</h3>
+    <ul id="warnings-list"></ul>
+  </section>
+</main>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

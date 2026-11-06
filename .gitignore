@@ -3,4 +3,5 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
-output/
+data_samples/workload_preview.json
+site/data.js
