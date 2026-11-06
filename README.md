@@ -1,2 +1,2 @@
-# Tametable
+# Timetable
 Timetable creating system
