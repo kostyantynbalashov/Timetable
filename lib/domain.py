@@ -95,7 +95,7 @@ class Room:
 
     @property
     def label(self) -> str:
-        return f"{self.building}-{self.number}"
+        return f"{self.building}-{self.number}" if self.building else self.number
 
 
 @dataclass
@@ -189,11 +189,12 @@ def parse_rooms(rows: list[dict], warnings: list[str]) -> list[Room]:
     for i, r in enumerate(rows, start=2):
         building, number = _s(r.get("корпус")), _s(r.get("номер"))
         capacity = _num(r.get("місткість"))
-        if not building or not number or not capacity:
-            warnings.append(f"Аудиторії, рядок {i}: пропущено — потрібні корпус, номер і місткість.")
+        if not number or not capacity:
+            warnings.append(f"Аудиторії, рядок {i}: пропущено — потрібні принаймні номер і місткість.")
             continue
+        key = f"{building}-{number}" if building else number
         room = Room(
-            key=f"{building}-{number}", building=building, floor=int(_num(r.get("поверх"), 0)),
+            key=key, building=building, floor=int(_num(r.get("поверх"), 0)),
             number=number, capacity=int(capacity), room_type=_s(r.get("тип")) or "інше",
             department=_s(r.get("кафедра")),
         )
