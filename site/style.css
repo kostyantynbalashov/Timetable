@@ -26,8 +26,11 @@ th { background: #f3f4f6; }
 #warnings-list li { margin-bottom: 6px; }
 #warnings-list li.ok { color: #15803d; }
 
-a.link { color: var(--accent); text-decoration: none; cursor: pointer; }
-a.link:hover { text-decoration: underline; }
+a.link {
+  color: var(--muted); text-decoration: underline; text-decoration-color: var(--border);
+  text-underline-offset: 2px; cursor: pointer;
+}
+a.link:hover { color: var(--fg); text-decoration-color: var(--muted); }
 
 .modal {
   display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4);
