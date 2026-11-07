@@ -26,6 +26,25 @@ th { background: #f3f4f6; }
 #warnings-list li { margin-bottom: 6px; }
 #warnings-list li.ok { color: #15803d; }
 
+a.link { color: var(--accent); text-decoration: none; cursor: pointer; }
+a.link:hover { text-decoration: underline; }
+
+.modal {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4);
+  align-items: center; justify-content: center; padding: 16px; z-index: 10;
+}
+.modal.open { display: flex; }
+.modal-box {
+  background: var(--card); color: var(--fg); border-radius: 8px; padding: 20px 24px;
+  max-width: 420px; width: 100%; position: relative; box-shadow: 0 10px 30px rgba(0,0,0,.2);
+}
+.modal-box h3 { margin-top: 0; }
+.modal-box ul { padding-left: 20px; }
+.modal-close {
+  position: absolute; top: 8px; right: 12px; background: none; border: none;
+  font-size: 22px; line-height: 1; cursor: pointer; color: var(--muted);
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #111827; --fg: #e5e7eb; --card: #1f2937; --border: #374151; --muted: #9ca3af;

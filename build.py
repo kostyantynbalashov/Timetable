@@ -56,6 +56,17 @@ def build():
     public_teachers = [{"name": t.display_short, "department": t.department} for t in teacher_list]
     public_rooms = [{"label": r.label, "building": r.building, "capacity": r.capacity, "type": r.room_type} for r in rooms]
 
+    # сумарні (фактично заплановані) години по дисциплінах — для картки
+    # дисципліни на сайті; не навчальний план, а те, що реально в розкладі.
+    subject_hours: dict[str, dict[str, int]] = {}
+    for o in occurrences:
+        by_type = subject_hours.setdefault(o.lesson.subject, {})
+        by_type[o.lesson.lesson_type] = by_type.get(o.lesson.lesson_type, 0) + 2  # 1 пара = 2 акад. год.
+    public_subjects = [
+        {"name": name, "total_hours": sum(by_type.values()), "by_type": by_type}
+        for name, by_type in subject_hours.items()
+    ]
+
     data = {
         "built": date.today().isoformat(),
         "settings": {
@@ -66,6 +77,7 @@ def build():
         "groups": public_groups,
         "teachers": public_teachers,
         "rooms": public_rooms,
+        "subjects": public_subjects,
         "warnings": warnings,
     }
     os.makedirs("site", exist_ok=True)
