@@ -3,14 +3,26 @@ clean entities. Bad rows are skipped and reported in `warnings`, mirroring
 the latin-dictionary build's "report, don't fail" approach."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
 from . import patterns
 
+_WS_RE = re.compile(r"\s+")
+
 
 def _s(v) -> str:
-    return str(v).strip() if v is not None else ""
+    """To text, with whitespace normalized: non-breaking spaces and runs of
+    spaces/tabs collapse to one regular space, and the ends are trimmed.
+    Matters because spreadsheet formulas (e.g. a "ПІБ" helper column built
+    with =A2&" "&B2&" "&C2) can introduce a non-breaking space or doubled
+    space that looks identical to a plain space but breaks exact-match
+    lookups (teacher/group/room cross-references) without this."""
+    if v is None:
+        return ""
+    s = str(v).replace("\xa0", " ").replace("​", "")
+    return _WS_RE.sub(" ", s).strip()
 
 
 def _num(v, default=None):
