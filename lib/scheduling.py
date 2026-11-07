@@ -270,6 +270,23 @@ def _conflict(a: Occurrence, b: Occurrence) -> str | None:
     return None
 
 
+def _resolve_room(text: str, rooms: list[Room]) -> tuple[str | None, str | None]:
+    """Matches an "Аудиторія" cell against the "Аудиторії" sheet, accepting
+    either the full label ("НЛаб-810") or, if it's unambiguous, just the
+    room number ("810") — operators naturally drop the building when there's
+    only one room with that number. Returns (resolved_label, error_or_None)."""
+    by_label = {r.label: r for r in rooms}
+    if text in by_label:
+        return text, None
+    by_number = [r for r in rooms if r.number == text]
+    if len(by_number) == 1:
+        return by_number[0].label, None
+    if len(by_number) > 1:
+        options = ", ".join(r.label for r in by_number)
+        return None, f"номер «{text}» є в кількох аудиторіях ({options}) — вкажіть разом із корпусом."
+    return None, f"аудиторії «{text}» немає в аркуші «Аудиторії»."
+
+
 def add_cyclic_and_custom(
     occurrences: list[Occurrence],
     lessons: list[Lesson],
@@ -277,19 +294,20 @@ def add_cyclic_and_custom(
     rooms: list[Room],
     warnings: list[str],
 ) -> list[Occurrence]:
-    room_labels = {r.label for r in rooms}
     for l in lessons:
         if l.pattern_type == "цикловий":
-            if l.cyclic_room not in room_labels:
-                warnings.append(f"Заняття, рядок {l.row} («{l.subject}»): аудиторії «{l.cyclic_room}» немає в аркуші «Аудиторії».")
+            resolved, err = _resolve_room(l.cyclic_room, rooms)
+            if err:
+                warnings.append(f"Заняття, рядок {l.row} («{l.subject}»): {err}")
                 continue
             new_occs = [
-                Occurrence(lesson=l, occurrence_date=o["date"], period=o["period"], room_label=l.cyclic_room)
+                Occurrence(lesson=l, occurrence_date=o["date"], period=o["period"], room_label=resolved)
                 for o in patterns.cyclic_dates(l.cyclic_start, l.cyclic_days, l.cyclic_periods)
             ]
         elif l.pattern_type == "довільний":
-            if l.custom_room not in room_labels:
-                warnings.append(f"Заняття, рядок {l.row} («{l.subject}»): аудиторії «{l.custom_room}» немає в аркуші «Аудиторії».")
+            resolved, err = _resolve_room(l.custom_room, rooms)
+            if err:
+                warnings.append(f"Заняття, рядок {l.row} («{l.subject}»): {err}")
                 continue
             try:
                 parsed = patterns.parse_custom(l.custom_spec)
@@ -297,7 +315,7 @@ def add_cyclic_and_custom(
                 warnings.append(f"Заняття, рядок {l.row} («{l.subject}»): {e}")
                 continue
             new_occs = [
-                Occurrence(lesson=l, occurrence_date=o["date"], period=o["period"], room_label=l.custom_room)
+                Occurrence(lesson=l, occurrence_date=o["date"], period=o["period"], room_label=resolved)
                 for o in parsed
             ]
         else:
