@@ -4,7 +4,7 @@ exact dates/rooms the operator already specified in the spreadsheet."""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 
 from ortools.sat.python import cp_model
 
@@ -27,6 +27,93 @@ def _eligible_rooms(lesson: Lesson, group: Group, rooms: list[Room]) -> list[Roo
     if lesson.room_type:
         out = [r for r in out if r.room_type == lesson.room_type]
     return out
+
+
+def _room_shortage_hint(lesson: Lesson, group: Group, rooms: list[Room]) -> str:
+    """When no room fits, name the closest one anyway so the operator has a
+    concrete next step instead of a dead end."""
+    by_type = [r for r in rooms if not lesson.room_type or r.room_type == lesson.room_type]
+    if not by_type:
+        return (
+            f"В аркуші «Аудиторії» взагалі немає аудиторій типу «{lesson.room_type}». "
+            "Додайте таку аудиторію або приберіть вимогу до типу."
+        )
+    best = max(by_type, key=lambda r: r.capacity)
+    if best.capacity >= group.size:
+        return f"Схоже, підійшла б «{best.label}» ({best.capacity} місць) — перевірте, чому її не підбирає скрипт."
+    return (
+        f"Найбільша підходяща за типом аудиторія — «{best.label}» ({best.capacity} місць), "
+        f"а групі «{group.key}» потрібно {group.size}. Варіанти: збільшити аудиторію, "
+        "поділити групу на підгрупи, або додати більшу аудиторію в аркуш «Аудиторії»."
+    )
+
+
+def _teacher_free_at(
+    teacher_key: str, occ_date: date, period: int, occurrences: list[Occurrence], teacher: Teacher
+) -> bool:
+    if occ_date.weekday() in teacher.unavailable_weekdays:
+        return False
+    return not any(
+        o.lesson.teacher_key == teacher_key and o.occurrence_date == occ_date and o.period == period
+        for o in occurrences
+    )
+
+
+def _group_free_at(group_key: str, occ_date: date, period: int, occurrences: list[Occurrence]) -> bool:
+    return not any(
+        o.lesson.group_key == group_key and o.occurrence_date == occ_date and o.period == period
+        for o in occurrences
+    )
+
+
+def _room_free_at(room_label: str, occ_date: date, period: int, occurrences: list[Occurrence]) -> bool:
+    return not any(
+        o.room_label == room_label and o.occurrence_date == occ_date and o.period == period
+        for o in occurrences
+    )
+
+
+def suggest_substitute_teachers(
+    lesson: Lesson, occ_date: date, period: int, teachers: dict[str, Teacher],
+    occurrences: list[Occurrence], max_suggestions: int = 3,
+) -> list[str]:
+    """Other teachers who teach the same subject and are free at that exact
+    date+period — answers "ким я можу його замінити?"."""
+    subject_norm = lesson.subject.strip().lower()
+    out = []
+    for key, t in teachers.items():
+        if key == lesson.teacher_key:
+            continue
+        if not any(s.strip().lower() == subject_norm for s in t.subjects):
+            continue
+        if _teacher_free_at(key, occ_date, period, occurrences, t):
+            out.append(t.display_short)
+        if len(out) >= max_suggestions:
+            break
+    return out
+
+
+def suggest_alt_dates(
+    lesson: Lesson, room_label: str, occ_date: date, period: int, teacher: Teacher,
+    occurrences: list[Occurrence], window_days: int = 14, max_suggestions: int = 3,
+) -> list[str]:
+    """Nearby weekdays, same period, where the lesson's teacher, group and
+    room are all free — answers "куди мені краще перемістити цю пару?"."""
+    out = []
+    for offset in list(range(1, window_days + 1)):
+        for d in (occ_date + timedelta(days=offset), occ_date - timedelta(days=offset)):
+            if d.weekday() >= 5:
+                continue
+            if not _teacher_free_at(lesson.teacher_key, d, period, occurrences, teacher):
+                continue
+            if not _group_free_at(lesson.group_key, d, period, occurrences):
+                continue
+            if not _room_free_at(room_label, d, period, occurrences):
+                continue
+            out.append(d.isoformat())
+            if len(out) >= max_suggestions:
+                return sorted(out)
+    return sorted(out)
 
 
 def solve_weekly(
@@ -60,7 +147,8 @@ def solve_weekly(
         elig_rooms = _eligible_rooms(l, group, rooms)
         if not elig_rooms:
             warnings.append(
-                f"Заняття, рядок {l.row} («{l.subject}»): немає аудиторії з потрібною місткістю/типом."
+                f"Заняття, рядок {l.row} («{l.subject}»): немає аудиторії з потрібною місткістю/типом. "
+                + _room_shortage_hint(l, group, rooms)
             )
             cand.append({})
             continue
@@ -74,11 +162,17 @@ def solve_weekly(
                     slots[(day, period, room.key)] = var
         cand.append(slots)
 
-    # exactly one slot per unit (or report infeasible unit)
+    # one slot per unit, OR leave it unassigned (tracked, not silently dropped) —
+    # this way one impossible-to-place lesson never blocks everyone else's schedule.
+    unassigned: list[cp_model.IntVar | None] = []
     for idx, slots in enumerate(cand):
         if not slots:
+            unassigned.append(None)
             continue
-        model.add_exactly_one(slots.values())
+        u = model.new_bool_var(f"unassigned_{idx}")
+        model.add_exactly_one(list(slots.values()) + [u])
+        unassigned.append(u)
+    model.minimize(sum(u for u in unassigned if u is not None))
 
     def weeks_of(idx):
         return units[idx][2]
@@ -115,17 +209,19 @@ def solve_weekly(
     status = solver.solve(model)
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         warnings.append(
-            "Не вдалося розставити стрічкові заняття без накладок — вимог забагато для наявних "
-            "аудиторій/часу. Зменшіть кількість занять, додайте аудиторії або розширте «Тижні»."
+            "Не вдалося порахувати стрічковий розклад узагалі — схоже на суперечність у даних "
+            "(напр. у викладача не лишилось жодного вільного дня). Перевірте «Недоступні дні»."
         )
         return []
 
     occurrences = []
+    unplaced: list[tuple[Lesson, int, bool]] = []  # (lesson, session, had_candidates)
     for idx, (l, k, weeks) in enumerate(units):
         slots = cand[idx]
-        assigned = next((key for key, var in slots.items() if solver.value(var)), None)
-        if assigned is None:
+        if not slots or solver.value(unassigned[idx]):
+            unplaced.append((l, k, bool(slots)))
             continue
+        assigned = next((key for key, var in slots.items() if solver.value(var)), None)
         day, period, room_key = assigned
         for occ in patterns.weekly_dates(settings.semester_start, day, period, weeks):
             occurrences.append(
@@ -134,7 +230,32 @@ def solve_weekly(
                     room_label=room_by_key[room_key].label,
                 )
             )
+
+    for l, k, had_candidates in unplaced:
+        if not had_candidates:
+            continue  # already explained above (no eligible room at all)
+        substitutes = suggest_substitute_teachers_by_subject(l.subject, l.teacher_key, teachers)
+        msg = (
+            f"Заняття, рядок {l.row} («{l.subject}», сесія {k + 1}): не вдалося знайти вільний "
+            f"час/аудиторію без накладок із рештою розкладу."
+        )
+        if substitutes:
+            msg += f" Цю дисципліну також веде: {', '.join(substitutes)} — можливо, варто передати йому/їй."
+        msg += " Або розширте «Тижні» на менш завантажені тижні, чи додайте аудиторію/час."
+        warnings.append(msg)
+
     return occurrences
+
+
+def suggest_substitute_teachers_by_subject(
+    subject: str, exclude_key: str, teachers: dict[str, Teacher]
+) -> list[str]:
+    subject_norm = subject.strip().lower()
+    return [
+        t.display_short
+        for key, t in teachers.items()
+        if key != exclude_key and any(s.strip().lower() == subject_norm for s in t.subjects)
+    ]
 
 
 def _conflict(a: Occurrence, b: Occurrence) -> str | None:
@@ -195,10 +316,31 @@ def add_cyclic_and_custom(
             for existing in occurrences:
                 kind = _conflict(occ, existing)
                 if kind:
-                    warnings.append(
+                    msg = (
                         f"Накладка {occ.occurrence_date.isoformat()}, пара {occ.period}: "
                         f"«{l.subject}» (рядок {l.row}) і «{existing.lesson.subject}» "
                         f"(рядок {existing.lesson.row}) претендують на одну й ту саму {kind}."
                     )
+                    if kind == "аудиторію":
+                        free_rooms = [
+                            r.label for r in rooms
+                            if r.label != occ.room_label
+                            and (not l.room_type or r.room_type == l.room_type)
+                            and _room_free_at(r.label, occ.occurrence_date, occ.period, occurrences)
+                        ][:3]
+                        if free_rooms:
+                            msg += f" Вільні на цей час: {', '.join(free_rooms)}."
+                    elif kind == "викладача":
+                        subs = suggest_substitute_teachers(l, occ.occurrence_date, occ.period, teachers, occurrences)
+                        if subs:
+                            msg += f" Вільний(і) на цей час викладач(і) цієї дисципліни: {', '.join(subs)}."
+                        alt_dates = suggest_alt_dates(l, occ.room_label, occ.occurrence_date, occ.period, teacher, occurrences)
+                        if alt_dates:
+                            msg += f" Або перенести на: {', '.join(alt_dates)}."
+                    elif kind == "групу":
+                        alt_dates = suggest_alt_dates(l, occ.room_label, occ.occurrence_date, occ.period, teacher, occurrences)
+                        if alt_dates:
+                            msg += f" Вільні дати для цього заняття: {', '.join(alt_dates)}."
+                    warnings.append(msg)
         occurrences.extend(new_occs)
     return occurrences
