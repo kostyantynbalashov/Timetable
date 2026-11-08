@@ -261,14 +261,36 @@ def parse_disciplines(rows: list[dict], warnings: list[str]) -> dict[str, Discip
 LESSON_TYPE_TO_PLAN_FIELD = {"лекція": "lecture_hours", "практичне": "practical_hours"}
 
 
+def _weeks_for_count(week_from: int, parity: str | None, count: int, max_week: int) -> int:
+    """Last week number such that [week_from..result] filtered by parity has
+    exactly `count` weeks (or runs out at max_week)."""
+    picked = 0
+    w = week_from
+    last = week_from
+    while w <= max_week and picked < count:
+        if parity == "odd" and w % 2 == 0:
+            w += 1
+            continue
+        if parity == "even" and w % 2 == 1:
+            w += 1
+            continue
+        last = w
+        picked += 1
+        w += 1
+    return last
+
+
 def apply_discipline_plans(
     lessons: list["Lesson"], disciplines: dict[str, Discipline], settings: Settings, warnings: list[str]
 ) -> None:
     """For 'стрічковий' lessons matching a 'Дисципліни' row (by subject text
-    == «Опис»): if «Тижні» is blank, derive it from the planned hours, so
-    the lesson stops once the topic's hours are used up instead of running
-    the whole semester by default. If «Тижні» was set explicitly, cross-check
-    instead of overriding — the operator may have a good reason."""
+    == «Опис»): the planned hours (lecture/practical) decide how long the
+    lesson runs — it stops once the topic's hours are used up — regardless
+    of what's in «Тижні» (which, in practice, is often filled in out of habit
+    rather than as a deliberate override). Only the *start* week and
+    odd/even parity are taken from «Тижні», if given; the end is always
+    recomputed from the plan. A mismatch is reported either way, so nothing
+    changes silently."""
     for l in lessons:
         if l.pattern_type != "стрічковий":
             continue
@@ -279,25 +301,37 @@ def apply_discipline_plans(
         planned_hours = getattr(disc, field_name)
         if not planned_hours:
             continue
-        planned_sessions = planned_hours / HOURS_PER_SESSION
+        planned_sessions = math.ceil(planned_hours / HOURS_PER_SESSION)
         per_week = max(1, l.sessions_per_week)
-        if not l.weeks_spec:
-            weeks_needed = math.ceil(planned_sessions / per_week)
-            l.weeks_spec = f"1-{min(weeks_needed, settings.weeks)}"
-            if weeks_needed > settings.weeks:
-                warnings.append(
-                    f"Заняття, рядок {l.row} («{l.subject}», {l.lesson_type}): за навчальним планом "
-                    f"({planned_hours:.0f} год.) треба {weeks_needed} тижнів при {per_week} пар(ах)/тиждень, "
-                    f"а в семестрі лише {settings.weeks}. Збільшіть «Пар на тиждень» або семестр у «Налаштуваннях»."
-                )
-        else:
-            actual_weeks = patterns.parse_weeks(l.weeks_spec, 1, settings.weeks)
-            actual_hours = len(actual_weeks) * per_week * HOURS_PER_SESSION
-            if abs(actual_hours - planned_hours) > HOURS_PER_SESSION / 2:
-                warnings.append(
-                    f"Заняття, рядок {l.row} («{l.subject}», {l.lesson_type}): за вказаними «Тижні» "
-                    f"вийде {actual_hours:.0f} год., а в «Дисциплінах» заплановано {planned_hours:.0f} год."
-                )
+        weeks_needed = math.ceil(planned_sessions / per_week)
+
+        spec = l.weeks_spec.strip().lower()
+        parity = "odd" if spec.startswith("непарні") else "even" if spec.startswith("парні") else None
+        prior_weeks = patterns.parse_weeks(l.weeks_spec, 1, settings.weeks) if l.weeks_spec else set()
+        week_from = min(prior_weeks) if prior_weeks else 1
+
+        week_to = _weeks_for_count(week_from, parity, weeks_needed, settings.weeks)
+        new_spec = (("непарні " if parity == "odd" else "парні " if parity == "even" else "")
+                    + f"{week_from}-{week_to}")
+
+        if l.weeks_spec and l.weeks_spec.strip().lower() != new_spec.strip().lower():
+            actual_hours = len(prior_weeks) * per_week * HOURS_PER_SESSION if prior_weeks else None
+            msg = (
+                f"Заняття, рядок {l.row} («{l.subject}», {l.lesson_type}): «Тижні» ("
+                f"{l.weeks_spec}"
+                + (f" → {actual_hours:.0f} год." if actual_hours is not None else "")
+                + f") не відповідає навчальному плану ({planned_hours:.0f} год.) — узято з плану: «{new_spec}»."
+            )
+            warnings.append(msg)
+        l.weeks_spec = new_spec
+
+        if week_from + (2 if parity else 1) * (weeks_needed - 1) > settings.weeks:
+            warnings.append(
+                f"Заняття, рядок {l.row} («{l.subject}», {l.lesson_type}): за навчальним планом "
+                f"({planned_hours:.0f} год.) треба {weeks_needed} тижнів при {per_week} пар(ах)/тиждень, "
+                f"а в семестрі (з тижня {week_from}) стільки не вміщається. Збільшіть «Пар на тиждень» "
+                "або кількість тижнів семестру в «Налаштуваннях»."
+            )
 
 
 VALID_PATTERNS = {"стрічковий", "цикловий", "довільний"}
