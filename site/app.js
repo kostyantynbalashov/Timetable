@@ -96,11 +96,21 @@
     const typeRows = s
       ? Object.entries(s.by_type).map(([t, h]) => `<li>${escapeHtml(t)}: ${h} год.</li>`).join('')
       : '<li>Немає даних.</li>';
+    const plan = s && s.plan;
+    const planBlock = plan
+      ? `<p class="hint" style="margin-top:14px">За навчальним планом:</p>
+         <ul>
+           <li>лекції: ${plan.lecture_hours} год.</li>
+           <li>практичні: ${plan.practical_hours} год.</li>
+           <li>СРС: ${plan.srs_hours} год.</li>
+         </ul>`
+      : '';
     $('#subject-modal-body').innerHTML = `
       <h3>${escapeHtml(name)}</h3>
-      <p class="hint">Заплановано в поточному розкладі (не навчальний план):</p>
+      <p class="hint">Заплановано в поточному розкладі:</p>
       <ul>${typeRows}</ul>
-      ${s ? `<p><strong>Усього: ${s.total_hours} год.</strong></p>` : ''}
+      ${s ? `<p><strong>Усього в розкладі: ${s.total_hours} год.</strong></p>` : ''}
+      ${planBlock}
     `;
     modal.classList.add('open');
   }

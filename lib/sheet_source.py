@@ -92,7 +92,7 @@ def write_private_sheet(sheet_id: str, sheet_name: str, rows: list[list], creden
     ws.update(rows, "A1")
 
 
-SHEETS = ["Налаштування", "Викладачі", "Аудиторії", "Групи", "Заняття"]
+SHEETS = ["Налаштування", "Викладачі", "Аудиторії", "Групи", "Дисципліни", "Заняття"]
 
 
 def load_source() -> dict[str, list[dict]]:

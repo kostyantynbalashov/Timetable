@@ -13,7 +13,14 @@ import os
 import sys
 from datetime import date
 
-from lib.domain import parse_groups, parse_lessons, parse_settings, parse_teachers
+from lib.domain import (
+    apply_discipline_plans,
+    parse_disciplines,
+    parse_groups,
+    parse_lessons,
+    parse_settings,
+    parse_teachers,
+)
 from lib.scheduling import add_cyclic_and_custom, solve_weekly
 from lib.sheet_source import load_source, write_private_sheet
 from lib.workload import DEFAULT_NORM_HOURS_PER_FTE, compute as compute_workload
@@ -33,7 +40,9 @@ def build():
     rooms = []
     from lib.domain import parse_rooms
     rooms = parse_rooms(raw["Аудиторії"], warnings)
+    disciplines = parse_disciplines(raw.get("Дисципліни", []), warnings)
     lessons = parse_lessons(raw["Заняття"], teachers, groups, warnings)
+    apply_discipline_plans(lessons, disciplines, settings, warnings)
 
     occurrences = solve_weekly(lessons, teachers, groups, rooms, settings, warnings)
     occurrences = add_cyclic_and_custom(occurrences, lessons, teachers, rooms, warnings)
@@ -63,7 +72,17 @@ def build():
         by_type = subject_hours.setdefault(o.lesson.subject, {})
         by_type[o.lesson.lesson_type] = by_type.get(o.lesson.lesson_type, 0) + 2  # 1 пара = 2 акад. год.
     public_subjects = [
-        {"name": name, "total_hours": sum(by_type.values()), "by_type": by_type}
+        {
+            "name": name, "total_hours": sum(by_type.values()), "by_type": by_type,
+            "plan": (
+                {
+                    "lecture_hours": disciplines[name].lecture_hours,
+                    "practical_hours": disciplines[name].practical_hours,
+                    "srs_hours": disciplines[name].srs_hours,
+                }
+                if name in disciplines else None
+            ),
+        }
         for name, by_type in subject_hours.items()
     ]
 

@@ -3,6 +3,7 @@ clean entities. Bad rows are skipped and reported in `warnings`, mirroring
 the latin-dictionary build's "report, don't fail" approach."""
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -10,6 +11,7 @@ from datetime import date, datetime
 from . import patterns
 
 _WS_RE = re.compile(r"\s+")
+HOURS_PER_SESSION = 2  # 1 пара = 2 академічні години
 
 
 def _s(v) -> str:
@@ -107,6 +109,20 @@ class Group:
     program: str
     enrollment_year: int
     size: int
+
+
+@dataclass
+class Discipline:
+    """Рядок аркуша «Дисципліни» — навчальний план: скільки годин лекцій/
+    практичних/СРС передбачено. «Опис» — те саме, що «Дисципліна» в
+    «Заняттях» (ключ для зіставлення)."""
+    key: str  # "Опис"
+    name: str
+    specialty: str
+    course: int
+    lecture_hours: float
+    practical_hours: float
+    srs_hours: float
 
 
 @dataclass
@@ -220,6 +236,68 @@ def parse_groups(rows: list[dict], warnings: list[str]) -> list[Group]:
             )
         )
     return out
+
+
+def parse_disciplines(rows: list[dict], warnings: list[str]) -> dict[str, Discipline]:
+    out = {}
+    for i, r in enumerate(rows, start=2):
+        key = _s(r.get("опис"))
+        name = _s(r.get("назва"))
+        if not key or not name:
+            continue  # допоміжний аркуш, порожні/недозаповнені рядки просто ігноруємо
+        if key in out:
+            warnings.append(f"Дисципліни, рядок {i}: «Опис» «{key}» повторюється — взято перший збіг.")
+            continue
+        out[key] = Discipline(
+            key=key, name=name, specialty=_s(r.get("спеціальність")),
+            course=int(_num(r.get("курс"), 0)),
+            lecture_hours=_num(r.get("лекції (год)"), 0) or 0,
+            practical_hours=_num(r.get("практичні (год.)") or r.get("практичні (год)"), 0) or 0,
+            srs_hours=_num(r.get("срс"), 0) or 0,
+        )
+    return out
+
+
+LESSON_TYPE_TO_PLAN_FIELD = {"лекція": "lecture_hours", "практичне": "practical_hours"}
+
+
+def apply_discipline_plans(
+    lessons: list["Lesson"], disciplines: dict[str, Discipline], settings: Settings, warnings: list[str]
+) -> None:
+    """For 'стрічковий' lessons matching a 'Дисципліни' row (by subject text
+    == «Опис»): if «Тижні» is blank, derive it from the planned hours, so
+    the lesson stops once the topic's hours are used up instead of running
+    the whole semester by default. If «Тижні» was set explicitly, cross-check
+    instead of overriding — the operator may have a good reason."""
+    for l in lessons:
+        if l.pattern_type != "стрічковий":
+            continue
+        disc = disciplines.get(l.subject)
+        field_name = LESSON_TYPE_TO_PLAN_FIELD.get(l.lesson_type.lower())
+        if not disc or not field_name:
+            continue
+        planned_hours = getattr(disc, field_name)
+        if not planned_hours:
+            continue
+        planned_sessions = planned_hours / HOURS_PER_SESSION
+        per_week = max(1, l.sessions_per_week)
+        if not l.weeks_spec:
+            weeks_needed = math.ceil(planned_sessions / per_week)
+            l.weeks_spec = f"1-{min(weeks_needed, settings.weeks)}"
+            if weeks_needed > settings.weeks:
+                warnings.append(
+                    f"Заняття, рядок {l.row} («{l.subject}», {l.lesson_type}): за навчальним планом "
+                    f"({planned_hours:.0f} год.) треба {weeks_needed} тижнів при {per_week} пар(ах)/тиждень, "
+                    f"а в семестрі лише {settings.weeks}. Збільшіть «Пар на тиждень» або семестр у «Налаштуваннях»."
+                )
+        else:
+            actual_weeks = patterns.parse_weeks(l.weeks_spec, 1, settings.weeks)
+            actual_hours = len(actual_weeks) * per_week * HOURS_PER_SESSION
+            if abs(actual_hours - planned_hours) > HOURS_PER_SESSION / 2:
+                warnings.append(
+                    f"Заняття, рядок {l.row} («{l.subject}», {l.lesson_type}): за вказаними «Тижні» "
+                    f"вийде {actual_hours:.0f} год., а в «Дисциплінах» заплановано {planned_hours:.0f} год."
+                )
 
 
 VALID_PATTERNS = {"стрічковий", "цикловий", "довільний"}
